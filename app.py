@@ -526,7 +526,7 @@ def is_content_unique(new_content, existing_contents, similarity_threshold=0.8):
     return True
 
 def assess_relevance_and_summarize(llm_client, query, document, temperature=0.2):
-    system_prompt = """You are a world-class AI assistant specializing in financial news analysis. Your task is to assess the relevance of a given document to a user's query and provide a detailed summary if it's relevant."""
+    system_prompt = """You are a world-class AI assistant specializing in news analysis. Your task is to assess the relevance of a given document to a user's query and provide a detailed summary if it's relevant."""
 
     user_prompt = f"""
 Query: {query}
@@ -541,7 +541,7 @@ Instructions:
    - Key facts and figures
    - Dates of events or announcements
    - Names of important entities mentioned
-   - Any financial metrics or changes reported
+   - Any metrics or changes reported
    - The potential impact or significance of the news
 3. If not relevant, simply state "Not relevant".
 
@@ -549,7 +549,7 @@ Your response should be in the following format:
 Relevant: [Yes/No]
 Summary: [Your detailed summary if relevant, or "Not relevant" if not]
 
-Remember to focus on financial aspects and implications in your assessment and summary. Aim to make the summary distinctive, highlighting what makes this particular news item unique compared to similar news.
+Remember to focus on key aspects and implications in your assessment and summary. Aim to make the summary distinctive, highlighting what makes this particular news item unique compared to similar news.
 """
 
     messages = [
@@ -595,7 +595,7 @@ def scrape_full_content(url, max_chars=3000, timeout=5, use_pydf2=True):
         return ""
 
 def llm_summarize(json_input, model, temperature=0.2):
-    system_prompt = """You are Sentinel, a world-class Financial analysis AI model who is expert at searching the web and answering user's queries. You are also an expert at summarizing web pages or documents and searching for content in them."""
+    system_prompt = """You are Sentinel, a world-class AI model who is expert at searching the web and answering user's queries. You are also an expert at summarizing web pages or documents and searching for content in them."""
     user_prompt = f"""
 Please provide a comprehensive summary based on the following JSON input:
 {json_input}
@@ -800,16 +800,16 @@ def search_and_scrape(query, chat_history, num_results=5, max_chars=3000, time_r
 
         if not relevant_documents:
             logger.warning("No relevant and unique documents found.")
-            return "No relevant and unique financial news found for the given query."
+            return "No relevant and unique news found for the given query."
 
         # Step 5: Rerank documents based on similarity to query and prioritize entity domain
         reranked_docs = rerank_documents_with_priority(rephrased_query, relevant_documents, entity_domain, similarity_threshold=0.95, max_results=num_results)
         
         if not reranked_docs:
             logger.warning("No documents remained after reranking.")
-            return "No relevant financial news found after filtering and ranking."
+            return "No relevant news found after filtering and ranking."
         
-        logger.info(f"Reranked and filtered to top {len(reranked_docs)} unique, finance-related documents.")
+        logger.info(f"Reranked and filtered to top {len(reranked_docs)} unique, related documents.")
 
         # Step 5: Scrape full content for top documents (up to num_results)
         for doc in reranked_docs[:num_results]:
@@ -869,7 +869,7 @@ def chat_function(message: str, history: List[Tuple[str, str]], num_results: int
 
 iface = gr.ChatInterface(
     chat_function,
-    title="Web Scraper for Financial News with Sentinel AI",
+    title="Web Scraper for News with Sentinel AI",
     description="Ask Sentinel any question. It will search the web for recent information or use its knowledge base as appropriate.",
     theme=gr.Theme.from_hub("allenai/gradio-theme"),
     additional_inputs=[
@@ -903,5 +903,5 @@ iface = gr.ChatInterface(
 )
 
 if __name__ == "__main__":
-    logger.info("Starting the SearXNG Scraper for Financial News using ChatInterface with Advanced Parameters")
+    logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(share=True)
