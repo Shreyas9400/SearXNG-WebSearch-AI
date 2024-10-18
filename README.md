@@ -2,6 +2,113 @@
 AI powered Chatbot with real time updates.
 # Web Scraper for Financial News with Sentinel AI
 
+## Setup Instructions
+
+### Prerequisites
+
+Ensure you have the following installed before proceeding:
+- Python 3.8 or higher
+- Git (for cloning the repository)
+- Virtualenv (recommended)
+
+### Step 1: Clone the Repository
+
+First, clone the repository to your local machine.
+
+```bash
+git clone https://github.com/your-username/your-repo-name.git
+cd your-repo-name
+
+### Step 2: Set Up a Virtual Environment (Optional but Recommended)
+
+It's a good practice to create a virtual environment for your project to isolate dependencies.
+
+# Create a virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+# On Windows:
+venv\Scripts\activate
+
+# On macOS/Linux:
+source venv/bin/activate
+
+### Step 3: Install the Required Dependencies
+Install the necessary dependencies specified in the requirements.txt file.
+
+pip install -r requirements.txt
+
+### Step 4: Set Up Environment Variables
+You will need API keys for various integrations used in the project (e.g., Hugging Face, SearXNG). Create a .env file in the root directory of your project and add the necessary environment variables.
+
+touch .env
+
+Add your API keys in the following format:
+
+HF_TOKEN=your_huggingface_api_token
+GROQ_API_KEY=your_groq_api_key
+MISTRAL_API_KEY=your_mistral_api_key
+SEARXNG_KEY=your_searxng_secret_key
+
+### Step 5: Running the App
+Once you've installed the dependencies and set up your API keys, run the app using:
+
+python app.py
+
+### Step 6: Launch the App
+The app will be hosted locally by default. Open your browser and go to: http://127.0.0.1:7860/
+
+## Setting Up SearXNG Instance
+
+To run your own instance of SearXNG, follow these steps.
+
+### Step 1: Install Dependencies
+
+Ensure you have `docker` and `docker-compose` installed on your system. If not, follow the respective installation guides:
+
+- [Install Docker](https://docs.docker.com/get-docker/)
+- [Install Docker Compose](https://docs.docker.com/compose/install/)
+
+### Step 2: Clone the SearXNG Repository
+
+Clone the SearXNG Docker repository to your local machine:
+
+```bash
+git clone https://github.com/searxng/searxng-docker.git
+cd searxng-docker
+
+### Step 3: Configure SearXNG
+You can configure the SearXNG settings by editing the settings.yml file. Adjust parameters like search engines, safe search settings, etc.
+
+To edit the settings, run:
+
+nano settings.yml
+
+**very important add the "Json" to formats**
+
+"formats:
+    - html
+    - json"
+
+### Step 4: Start the SearXNG Instance
+Once the configuration is set, start the SearXNG instance using Docker Compose:
+
+docker-compose up -d
+
+This will start the SearXNG service in detached mode, meaning it will run in the background.
+
+### Step 5: Access the SearXNG Instance
+After the instance starts, you can access SearXNG via your browser at:
+
+http://localhost:8080
+
+### Step 6: Configure the App to Use the Local SearXNG Instance
+If you're integrating SearXNG with another application, you need to point the application to your local SearXNG instance. Update your .env file with the following:
+
+SEARXNG_KEY=http://localhost:8080
+
+Now, your application will send search requests to your locally hosted SearXNG instance.
+
 ## Table of Contents
 1. [Overview](#overview)
 2. [Core Components](#core-components)
