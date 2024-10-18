@@ -17,9 +17,9 @@ First, clone the repository to your local machine.
 
 ```bash
 git clone https://github.com/your-username/your-repo-name.git
-cd your-repo-name```
+cd your-repo-name
 
-### Step 2: Set Up a Virtual Environment (Optional but Recommended)
+Step 2: Set Up a Virtual Environment (Optional but Recommended)
 
 It's a good practice to create a virtual environment for your project to isolate dependencies.
 
