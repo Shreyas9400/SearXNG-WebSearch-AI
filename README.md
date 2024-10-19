@@ -6,8 +6,7 @@ AI powered Chatbot with real time updates.
 
 <img src="https://github.com/user-attachments/assets/6eb31020-dde8-4b89-9666-46bda0b4b4ad" width="800" alt="Interface Image">
 
-##
-##
+## Demo
 
 https://github.com/user-attachments/assets/37b2c9a2-be0b-46fb-bf6d-628d7ec78e1d
 
