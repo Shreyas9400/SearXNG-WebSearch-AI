@@ -2,6 +2,16 @@
 AI powered Chatbot with real time updates.
 # Web Scraper for Financial News with Sentinel AI
 
+## Interface
+
+<img src="https://github.com/user-attachments/assets/6eb31020-dde8-4b89-9666-46bda0b4b4ad" width="800" alt="Interface Image">
+
+##
+##
+
+<img src="https://github.com/user-attachments/assets/248dadca-ce32-4bfc-8391-9d6dc91fd74e" width="800" alt="SearXNG Workings GIF">
+
+
 ## Setup Instructions
 
 ### Prerequisites
