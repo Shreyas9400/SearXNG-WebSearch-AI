@@ -9,7 +9,8 @@ AI powered Chatbot with real time updates.
 ##
 ##
 
-<img src="https://github.com/user-attachments/assets/248dadca-ce32-4bfc-8391-9d6dc91fd74e" width="800" alt="SearXNG Workings GIF">
+https://github.com/user-attachments/assets/37b2c9a2-be0b-46fb-bf6d-628d7ec78e1d
+
 
 
 ## Setup Instructions
