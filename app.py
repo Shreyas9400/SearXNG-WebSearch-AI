@@ -151,7 +151,7 @@ def generate_ai_response(query: str, chat_history: str, llm_client, model: str) 
         if model == "groq":
             response = groq_client.chat.completions.create(
                 messages=messages,
-                model="llama-3.1-70b-instant",
+                model="llama-3.1-70b-versatile",
                 max_tokens=500,
                 temperature=0.7
             )
