@@ -281,8 +281,8 @@ def rephrase_query(chat_history, query, temperature=0.2):
    - First, check if the query contains words indicating current information (e.g., "today", "now", "current", "latest"):
      - If present, do NOT add any date operators to the query
    - Otherwise, if the query mentions a specific time period (e.g., a quarter, year, or date range):
-     - Add appropriate "after:" operators to the end of the rephrased query.
-     - Use the format "after:YYYY" for date ranges.
+     - Add appropriate "after: " operators to the end of the rephrased query.
+     - Use the format "after: YYYY" for date ranges.
    - If no specific time period is mentioned and no current-time indicators are present:
      - Append "after: {CURRENT_YEAR}" to the end of the rephrased query.
    - Do not use quotes or the "+" operator when adding dates.
@@ -299,16 +299,20 @@ def rephrase_query(chat_history, query, temperature=0.2):
 
 **Scenario 2: New Topic with Specific Quarter**
 - **User Query**: "How did Bank of America perform during Q2 2024?"
-- **Rephrased Query**: "How did \"Bank of America\" perform during Q2 2024 after:2024"
+- **Rephrased Query**: "How did \"Bank of America\" perform during Q2 2024 after: 2024"
 
 **Scenario 3: Continuation with Date Range**
 - **Previous Query**: "What were Apple's sales figures for 2023?"
 - **User Query**: "How about for the first half of 2024?"
-- **Rephrased Query**: "How about \"Apple\"'s sales figures for the first half of 2024 after:2024"
+- **Rephrased Query**: "How about \"Apple\"'s sales figures for the first half of 2024 after: 2024"
 
 **Scenario 4: Current Status Query**
 - **User Query**: "What is the current market share of Toyota and Honda in the US?"
 - **Rephrased Query**: "What is the current market share of \"Toyota\" and \"Honda\" in the \"US\""
+
+**Scenario 5: Current Status Query**
+- **User Query**: "Bank of America Q2 2024 earnings?"
+- **Rephrased Query**: "\"Bank of America\" Q2 2024 earnings after: 2024""
 """
 
     # Create the user prompt with the chat history and current query
