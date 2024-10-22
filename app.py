@@ -50,8 +50,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # SearXNG instance details
-SEARXNG_URL = 'http://localhost:8888'
-SEARXNG_KEY = 'your_secret_key'
+SEARXNG_URL = os.getenv("SEARXNG_URL")
+SEARXNG_KEY = os.getenv("SEARXNG_KEY")
+
+
+logger.info(f"SearXNG URL: {SEARXNG_URL}")
+logger.info(f"SearXNG Key: {SEARXNG_KEY}") 
+
 
 # Use the environment variable
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -908,4 +913,5 @@ iface = gr.ChatInterface(
 
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
-    iface.launch(share=True)
+    iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+

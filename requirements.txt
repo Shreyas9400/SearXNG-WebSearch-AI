@@ -19,3 +19,6 @@ groq
 faiss-cpu
 mistralai
 rank_bm25
+Flask==2.0.1
+Werkzeug==2.0.1
+# Add any other required packages here
