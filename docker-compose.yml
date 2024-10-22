@@ -12,3 +12,4 @@ services:
     environment:
       - FLASK_ENV=${FLASK_ENV:-development}
       - FLASK_APP=${FLASK_APP:-app.py}
+      - SEARXNG_KEY=${SEARXNG_KEY:-http://localhost:8080}
