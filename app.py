@@ -882,11 +882,11 @@ iface = gr.ChatInterface(
     description="Ask Sentinel any question. It will search the web for recent information or use its knowledge base as appropriate.",
     theme=gr.Theme.from_hub("allenai/gradio-theme"),
     additional_inputs=[
-        gr.Slider(5, 20, value=10, step=1, label="Number of initial results"),
+        gr.Slider(5, 20, value=3, step=1, label="Number of initial results"),  # Changed default to 3
         gr.Slider(500, 10000, value=1500, step=100, label="Max characters to retrieve"),
-        gr.Dropdown(["", "day", "week", "month", "year"], value="", label="Time Range"),
-        gr.Dropdown(["", "all", "en", "fr", "de", "es", "it", "nl", "pt", "pl", "ru", "zh"], value="", label="Language"),
-        gr.Dropdown(["", "general", "news", "images", "videos", "music", "files", "it", "science", "social media"], value="", label="Category"),
+        gr.Dropdown(["", "day", "week", "month", "year"], value="week", label="Time Range"),
+        gr.Dropdown(["", "all", "en", "fr", "de", "es", "it", "nl", "pt", "pl", "ru", "zh"], value="en", label="Language"),
+        gr.Dropdown(["", "general", "news", "images", "videos", "music", "files", "it", "science", "social media"], value="general", label="Category"),
         gr.Dropdown(
             ["google", "bing", "duckduckgo", "baidu", "yahoo", "qwant", "startpage"],
             multiselect=True,
@@ -894,10 +894,10 @@ iface = gr.ChatInterface(
             label="Engines"
         ),
         gr.Slider(0, 2, value=2, step=1, label="Safe Search Level"),
-        gr.Radio(["GET", "POST"], value="POST", label="HTTP Method"),
+        gr.Radio(["GET", "POST"], value="GET", label="HTTP Method"),  # Changed default to GET
         gr.Slider(0, 1, value=0.2, step=0.1, label="LLM Temperature"),
-        gr.Dropdown(["huggingface", "groq", "mistral"], value="mistral", label="LLM Model"),
-        gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=False),
+        gr.Dropdown(["huggingface", "groq", "mistral"], value="groq", label="LLM Model"),  # Changed default to "groq"
+        gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=True),  # Changed default to True
     ],
     additional_inputs_accordion=gr.Accordion("⚙️ Advanced Parameters", open=True),
     retry_btn="Retry",
@@ -914,4 +914,10 @@ iface = gr.ChatInterface(
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
+
+
+
+
 
