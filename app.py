@@ -37,10 +37,11 @@ from collections import Counter
 import numpy as np
 from typing import List, Dict, Tuple
 import datetime
-CURRENT_YEAR = datetime.datetime.now().year
+from abc import ABC, abstractmethod
+from typing import List, Dict, Any
 
 # Automatically get the current year
-current_year = datetime.datetime.now().year
+CURRENT_YEAR = datetime.datetime.now().year
 
 # Load environment variables from a .env file
 load_dotenv()
@@ -78,8 +79,65 @@ mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 # Initialize the similarity model
 similarity_model = SentenceTransformer('all-MiniLM-L6-v2')
 
+# Step 1: Create a base class for AI models
+class AIModel(ABC):
+    @abstractmethod
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        pass
 
-def determine_query_type(query: str, chat_history: str, llm_client) -> str:
+# Step 2: Implement specific classes for each AI model
+class HuggingFaceModel(AIModel):
+    def __init__(self, client):
+        self.client = client
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        response = self.client.chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return response.choices[0].message.content.strip()
+
+class GroqModel(AIModel):
+    def __init__(self, client):
+        self.client = client
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        response = self.client.chat.completions.create(
+            messages=messages,
+            model="llama-3.1-70b-versatile",
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return response.choices[0].message.content.strip()
+
+class MistralModel(AIModel):
+    def __init__(self, client):
+        self.client = client
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        response = self.client.chat.complete(
+            model="open-mistral-nemo",
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return response.choices[0].message.content.strip()
+
+# Step 3: Use a factory pattern to create model instances
+class AIModelFactory:
+    @staticmethod
+    def create_model(model_name: str, client: Any) -> AIModel:
+        if model_name == "huggingface":
+            return HuggingFaceModel(client)
+        elif model_name == "groq":
+            return GroqModel(client)
+        elif model_name == "mistral":
+            return MistralModel(client)
+        else:
+            raise ValueError(f"Unsupported model: {model_name}")
+
+def determine_query_type(query: str, chat_history: str, ai_model: AIModel) -> str:
     system_prompt = """You are Sentinel, an intelligent AI agent tasked with determining whether a user query requires a web search or can be answered using your existing knowledge base. Your knowledge cutoff date is 2023, and the current year is 2024. Your task is to analyze the query and decide on the appropriate action.
 
     Instructions for Sentinel:
@@ -124,18 +182,18 @@ def determine_query_type(query: str, chat_history: str, llm_client) -> str:
     ]
 
     try:
-        response = llm_client.chat_completion(
+        response = ai_model.generate_response(
             messages=messages,
             max_tokens=10,
             temperature=0.2
         )
-        decision = response.choices[0].message.content.strip().lower()
+        decision = response.strip().lower()
         return "web_search" if decision == "web_search" else "knowledge_base"
     except Exception as e:
         logger.error(f"Error determining query type: {e}")
         return "web_search"  # Default to web search if there's an error
 
-def generate_ai_response(query: str, chat_history: str, llm_client, model: str) -> str:
+def generate_ai_response(query: str, chat_history: str, ai_model: AIModel, temperature: float) -> str:
     system_prompt = """You are a helpful AI assistant. Provide a concise and informative response to the user's query based on your existing knowledge. Do not make up information or claim to have real-time data."""
 
     user_prompt = f"""
@@ -153,29 +211,12 @@ def generate_ai_response(query: str, chat_history: str, llm_client, model: str) 
     ]
 
     try:
-        if model == "groq":
-            response = groq_client.chat.completions.create(
-                messages=messages,
-                model="llama-3.1-70b-versatile",
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content.strip()
-        elif model == "mistral":
-            response = mistral_client.chat.complete(
-                model="open-mistral-nemo",
-                messages=messages,
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content.strip()
-        else:  # huggingface
-            response = llm_client.chat_completion(
-                messages=messages,
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content.strip()
+        response = ai_model.generate_response(
+            messages=messages,
+            max_tokens=500,
+            temperature=temperature
+        )
+        return response
     except Exception as e:
         logger.error(f"Error generating AI response: {e}")
         return "I apologize, but I'm having trouble generating a response at the moment. Please try again later."
@@ -662,8 +703,23 @@ Instructions:
         logger.error(f"Error in LLM summarization: {e}")
         return "Error: Unable to generate a summary. Please try again."
 
-def search_and_scrape(query, chat_history, num_results=5, max_chars=3000, time_range="", language="all", category="", 
-                      engines=[], safesearch=2, method="GET", llm_temperature=0.2, timeout=5, model="huggingface", use_pydf2=True):   
+def search_and_scrape(
+    query: str,
+    chat_history: str,
+    ai_model: AIModel,
+    num_results: int = 10,
+    max_chars: int = 1500,
+    time_range: str = "",
+    language: str = "en",
+    category: str = "general",
+    engines: List[str] = [],
+    safesearch: int = 2,
+    method: str = "GET",
+    llm_temperature: float = 0.2,
+    timeout: int = 5,
+    model: str = "huggingface",
+    use_pydf2: bool = True
+):
     try:
         # Step 1: Rephrase the Query
         rephrased_query = rephrase_query(chat_history, query, temperature=llm_temperature)
@@ -847,19 +903,34 @@ def search_and_scrape(query, chat_history, num_results=5, max_chars=3000, time_r
         logger.error(f"Unexpected error in search_and_scrape: {e}")
         return f"An unexpected error occurred during the search and scrape process: {e}"
 
+# Helper function to get the appropriate client for each model
+def get_client_for_model(model: str) -> Any:
+    if model == "huggingface":
+        return InferenceClient("mistralai/Mistral-Small-Instruct-2409", token=HF_TOKEN)
+    elif model == "groq":
+        return Groq(api_key=GROQ_API_KEY)
+    elif model == "mistral":
+        return Mistral(api_key=MISTRAL_API_KEY)
+    else:
+        raise ValueError(f"Unsupported model: {model}")
+
 def chat_function(message: str, history: List[Tuple[str, str]], num_results: int, max_chars: int, time_range: str, language: str, category: str, engines: List[str], safesearch: int, method: str, llm_temperature: float, model: str, use_pydf2: bool):
     chat_history = "\n".join([f"{role}: {msg}" for role, msg in history])
     
-    query_type = determine_query_type(message, chat_history, client)
+    # Create the appropriate AI model
+    ai_model = AIModelFactory.create_model(model, get_client_for_model(model))
+    
+    query_type = determine_query_type(message, chat_history, ai_model)
     
     if query_type == "knowledge_base":
-        response = generate_ai_response(message, chat_history, client, model)
+        response = generate_ai_response(message, chat_history, ai_model, llm_temperature)
     else:  # web_search
         gr.Info("Initiating Web Search")
         yield "Request you to sit back and relax until I scrape the web for up-to-date information"
         response = search_and_scrape(
             query=message,
             chat_history=chat_history,
+            ai_model=ai_model,
             num_results=num_results,
             max_chars=max_chars,
             time_range=time_range,
@@ -914,6 +985,11 @@ iface = gr.ChatInterface(
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
+
+
+
 
 
 
