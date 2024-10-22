@@ -37,10 +37,11 @@ from collections import Counter
 import numpy as np
 from typing import List, Dict, Tuple
 import datetime
-CURRENT_YEAR = datetime.datetime.now().year
+from abc import ABC, abstractmethod
+from typing import List, Dict, Any
 
 # Automatically get the current year
-current_year = datetime.datetime.now().year
+CURRENT_YEAR = datetime.datetime.now().year
 
 # Load environment variables from a .env file
 load_dotenv()
@@ -50,8 +51,30 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # SearXNG instance details
-SEARXNG_URL = 'http://localhost:8888'
-SEARXNG_KEY = 'your_secret_key'
+SEARXNG_URL = os.getenv("SEARXNG_URL")
+SEARXNG_KEY = os.getenv("SEARXNG_KEY")
+
+
+logger.info(f"SearXNG URL: {SEARXNG_URL}")
+logger.info(f"SearXNG Key: {SEARXNG_KEY}") 
+
+
+# ... other environment variables ...
+CUSTOM_LLM = os.getenv("CUSTOM_LLM")
+
+logger.info(f"CUSTOM_LLM: {CUSTOM_LLM}")
+
+def fetch_custom_models():
+    if not CUSTOM_LLM:
+        return []
+    try:
+        response = requests.get(f"{CUSTOM_LLM}/v1/models")
+        response.raise_for_status()
+        models = response.json().get("data", [])
+        return [model["id"] for model in models]
+    except Exception as e:
+        logger.error(f"Error fetching custom models: {e}")
+        return []
 
 # Use the environment variable
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -74,7 +97,89 @@ mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 similarity_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 
-def determine_query_type(query: str, chat_history: str, llm_client) -> str:
+
+# Step 1: Create a base class for AI models
+class AIModel(ABC):
+    @abstractmethod
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        pass
+
+# Step 2: Implement specific classes for each AI model
+class HuggingFaceModel(AIModel):
+    def __init__(self, client):
+        self.client = client
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        response = self.client.chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return response.choices[0].message.content.strip()
+
+class GroqModel(AIModel):
+    def __init__(self, client):
+        self.client = client
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        response = self.client.chat.completions.create(
+            messages=messages,
+            model="llama-3.1-70b-versatile",
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return response.choices[0].message.content.strip()
+
+class MistralModel(AIModel):
+    def __init__(self, client):
+        self.client = client
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        response = self.client.chat.complete(
+            model="open-mistral-nemo",
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return response.choices[0].message.content.strip()
+
+# Step 3: Use a factory pattern to create model instances
+class CustomModel(AIModel):
+    def __init__(self, model_name):
+        self.model_name = model_name
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        try:
+            response = requests.post(
+                f"{CUSTOM_LLM}/v1/chat/completions",
+                json={
+                    "model": self.model_name,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                }
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error(f"Error generating response from custom model: {e}")
+            return "Error: Unable to generate response from custom model."
+
+class AIModelFactory:
+    @staticmethod
+    def create_model(model_name: str, client: Any = None) -> AIModel:
+        if model_name == "huggingface":
+            return HuggingFaceModel(client)
+        elif model_name == "groq":
+            return GroqModel(client)
+        elif model_name == "mistral":
+            return MistralModel(client)
+        elif CUSTOM_LLM and model_name in fetch_custom_models():
+            return CustomModel(model_name)
+        else:
+            raise ValueError(f"Unsupported model: {model_name}")
+
+def determine_query_type(query: str, chat_history: str, ai_model: AIModel) -> str:
     system_prompt = """You are Sentinel, an intelligent AI agent tasked with determining whether a user query requires a web search or can be answered using your existing knowledge base. Your knowledge cutoff date is 2023, and the current year is 2024. Your task is to analyze the query and decide on the appropriate action.
 
     Instructions for Sentinel:
@@ -119,18 +224,18 @@ def determine_query_type(query: str, chat_history: str, llm_client) -> str:
     ]
 
     try:
-        response = llm_client.chat_completion(
+        response = ai_model.generate_response(
             messages=messages,
             max_tokens=10,
             temperature=0.2
         )
-        decision = response.choices[0].message.content.strip().lower()
+        decision = response.strip().lower()
         return "web_search" if decision == "web_search" else "knowledge_base"
     except Exception as e:
         logger.error(f"Error determining query type: {e}")
         return "web_search"  # Default to web search if there's an error
 
-def generate_ai_response(query: str, chat_history: str, llm_client, model: str) -> str:
+def generate_ai_response(query: str, chat_history: str, ai_model: AIModel, temperature: float) -> str:
     system_prompt = """You are a helpful AI assistant. Provide a concise and informative response to the user's query based on your existing knowledge. Do not make up information or claim to have real-time data."""
 
     user_prompt = f"""
@@ -148,29 +253,12 @@ def generate_ai_response(query: str, chat_history: str, llm_client, model: str) 
     ]
 
     try:
-        if model == "groq":
-            response = groq_client.chat.completions.create(
-                messages=messages,
-                model="llama-3.1-70b-versatile",
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content.strip()
-        elif model == "mistral":
-            response = mistral_client.chat.complete(
-                model="open-mistral-nemo",
-                messages=messages,
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content.strip()
-        else:  # huggingface
-            response = llm_client.chat_completion(
-                messages=messages,
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content.strip()
+        response = ai_model.generate_response(
+            messages=messages,
+            max_tokens=500,
+            temperature=temperature
+        )
+        return response
     except Exception as e:
         logger.error(f"Error generating AI response: {e}")
         return "I apologize, but I'm having trouble generating a response at the moment. Please try again later."
@@ -657,8 +745,23 @@ Instructions:
         logger.error(f"Error in LLM summarization: {e}")
         return "Error: Unable to generate a summary. Please try again."
 
-def search_and_scrape(query, chat_history, num_results=5, max_chars=3000, time_range="", language="all", category="", 
-                      engines=[], safesearch=2, method="GET", llm_temperature=0.2, timeout=5, model="huggingface", use_pydf2=True):   
+def search_and_scrape(
+    query: str,
+    chat_history: str,
+    ai_model: AIModel,
+    num_results: int = 10,
+    max_chars: int = 1500,
+    time_range: str = "",
+    language: str = "en",
+    category: str = "general",
+    engines: List[str] = [],
+    safesearch: int = 2,
+    method: str = "GET",
+    llm_temperature: float = 0.2,
+    timeout: int = 5,
+    model: str = "huggingface",
+    use_pydf2: bool = True
+):
     try:
         # Step 1: Rephrase the Query
         rephrased_query = rephrase_query(chat_history, query, temperature=llm_temperature)
@@ -842,19 +945,36 @@ def search_and_scrape(query, chat_history, num_results=5, max_chars=3000, time_r
         logger.error(f"Unexpected error in search_and_scrape: {e}")
         return f"An unexpected error occurred during the search and scrape process: {e}"
 
+# Helper function to get the appropriate client for each model
+def get_client_for_model(model: str) -> Any:
+    if model == "huggingface":
+        return InferenceClient("mistralai/Mistral-Small-Instruct-2409", token=HF_TOKEN)
+    elif model == "groq":
+        return Groq(api_key=GROQ_API_KEY)
+    elif model == "mistral":
+        return Mistral(api_key=MISTRAL_API_KEY)
+    elif CUSTOM_LLM and model in fetch_custom_models():
+        return None  # CustomModel doesn't need a client
+    else:
+        raise ValueError(f"Unsupported model: {model}")
+
 def chat_function(message: str, history: List[Tuple[str, str]], num_results: int, max_chars: int, time_range: str, language: str, category: str, engines: List[str], safesearch: int, method: str, llm_temperature: float, model: str, use_pydf2: bool):
     chat_history = "\n".join([f"{role}: {msg}" for role, msg in history])
     
-    query_type = determine_query_type(message, chat_history, client)
+    # Create the appropriate AI model
+    ai_model = AIModelFactory.create_model(model, get_client_for_model(model))
+    
+    query_type = determine_query_type(message, chat_history, ai_model)
     
     if query_type == "knowledge_base":
-        response = generate_ai_response(message, chat_history, client, model)
+        response = generate_ai_response(message, chat_history, ai_model, llm_temperature)
     else:  # web_search
         gr.Info("Initiating Web Search")
         yield "Request you to sit back and relax until I scrape the web for up-to-date information"
         response = search_and_scrape(
             query=message,
             chat_history=chat_history,
+            ai_model=ai_model,
             num_results=num_results,
             max_chars=max_chars,
             time_range=time_range,
@@ -871,17 +991,20 @@ def chat_function(message: str, history: List[Tuple[str, str]], num_results: int
     yield response
 
 
+custom_models = fetch_custom_models()
+all_models = ["huggingface", "groq", "mistral"] + custom_models
+
 iface = gr.ChatInterface(
     chat_function,
     title="Web Scraper for News with Sentinel AI",
     description="Ask Sentinel any question. It will search the web for recent information or use its knowledge base as appropriate.",
     theme=gr.Theme.from_hub("allenai/gradio-theme"),
     additional_inputs=[
-        gr.Slider(5, 20, value=10, step=1, label="Number of initial results"),
+        gr.Slider(5, 20, value=3, step=1, label="Number of initial results"),
         gr.Slider(500, 10000, value=1500, step=100, label="Max characters to retrieve"),
-        gr.Dropdown(["", "day", "week", "month", "year"], value="", label="Time Range"),
-        gr.Dropdown(["", "all", "en", "fr", "de", "es", "it", "nl", "pt", "pl", "ru", "zh"], value="", label="Language"),
-        gr.Dropdown(["", "general", "news", "images", "videos", "music", "files", "it", "science", "social media"], value="", label="Category"),
+        gr.Dropdown(["", "day", "week", "month", "year"], value="week", label="Time Range"),
+        gr.Dropdown(["", "all", "en", "fr", "de", "es", "it", "nl", "pt", "pl", "ru", "zh"], value="en", label="Language"),
+        gr.Dropdown(["", "general", "news", "images", "videos", "music", "files", "it", "science", "social media"], value="general", label="Category"),
         gr.Dropdown(
             ["google", "bing", "duckduckgo", "baidu", "yahoo", "qwant", "startpage"],
             multiselect=True,
@@ -889,10 +1012,10 @@ iface = gr.ChatInterface(
             label="Engines"
         ),
         gr.Slider(0, 2, value=2, step=1, label="Safe Search Level"),
-        gr.Radio(["GET", "POST"], value="POST", label="HTTP Method"),
+        gr.Radio(["GET", "POST"], value="GET", label="HTTP Method"),
         gr.Slider(0, 1, value=0.2, step=0.1, label="LLM Temperature"),
-        gr.Dropdown(["huggingface", "groq", "mistral"], value="mistral", label="LLM Model"),
-        gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=False),
+        gr.Dropdown(all_models, value="groq", label="LLM Model"),
+        gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=True),
     ],
     additional_inputs_accordion=gr.Accordion("⚙️ Advanced Parameters", open=True),
     retry_btn="Retry",
@@ -908,4 +1031,20 @@ iface = gr.ChatInterface(
 
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
-    iface.launch(share=True)
+    iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

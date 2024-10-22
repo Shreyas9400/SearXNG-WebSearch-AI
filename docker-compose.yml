@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    ports:
+      - "${PORT:-7860}:7860"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - SEARXNG_KEY=${SEARXNG_KEY:-http://localhost:8080}
