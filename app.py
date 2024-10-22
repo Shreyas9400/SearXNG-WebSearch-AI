@@ -61,9 +61,12 @@ logger.info(f"SearXNG Key: {SEARXNG_KEY}")
 
 # ... other environment variables ...
 CUSTOM_LLM = os.getenv("CUSTOM_LLM")
+CUSTOM_LLM_DEFAULT_MODEL = os.getenv("CUSTOM_LLM_DEFAULT_MODEL")
 
 logger.info(f"CUSTOM_LLM: {CUSTOM_LLM}")
+logger.info(f"CUSTOM_LLM_DEFAULT_MODEL: {CUSTOM_LLM_DEFAULT_MODEL}")
 
+# Define the fetch_custom_models function here
 def fetch_custom_models():
     if not CUSTOM_LLM:
         return []
@@ -75,6 +78,15 @@ def fetch_custom_models():
     except Exception as e:
         logger.error(f"Error fetching custom models: {e}")
         return []
+
+# Fetch custom models and determine the default model
+custom_models = fetch_custom_models()
+all_models = ["huggingface", "groq", "mistral"] + custom_models
+
+# Determine the default model
+default_model = CUSTOM_LLM_DEFAULT_MODEL if CUSTOM_LLM_DEFAULT_MODEL in all_models else "groq"
+
+logger.info(f"Default model selected: {default_model}")
 
 # Use the environment variable
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -953,7 +965,7 @@ def get_client_for_model(model: str) -> Any:
         return Groq(api_key=GROQ_API_KEY)
     elif model == "mistral":
         return Mistral(api_key=MISTRAL_API_KEY)
-    elif CUSTOM_LLM and model in fetch_custom_models():
+    elif CUSTOM_LLM and (model in fetch_custom_models() or model == CUSTOM_LLM_DEFAULT_MODEL):
         return None  # CustomModel doesn't need a client
     else:
         raise ValueError(f"Unsupported model: {model}")
@@ -991,9 +1003,6 @@ def chat_function(message: str, history: List[Tuple[str, str]], num_results: int
     yield response
 
 
-custom_models = fetch_custom_models()
-all_models = ["huggingface", "groq", "mistral"] + custom_models
-
 iface = gr.ChatInterface(
     chat_function,
     title="Web Scraper for News with Sentinel AI",
@@ -1014,7 +1023,7 @@ iface = gr.ChatInterface(
         gr.Slider(0, 2, value=2, step=1, label="Safe Search Level"),
         gr.Radio(["GET", "POST"], value="GET", label="HTTP Method"),
         gr.Slider(0, 1, value=0.2, step=0.1, label="LLM Temperature"),
-        gr.Dropdown(all_models, value="groq", label="LLM Model"),
+        gr.Dropdown(all_models, value=default_model, label="LLM Model"),
         gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=True),
     ],
     additional_inputs_accordion=gr.Accordion("⚙️ Advanced Parameters", open=True),
@@ -1032,6 +1041,14 @@ iface = gr.ChatInterface(
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
+
+
+
+
+
+
 
 
 
