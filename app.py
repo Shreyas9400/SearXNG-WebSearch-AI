@@ -59,6 +59,23 @@ logger.info(f"SearXNG URL: {SEARXNG_URL}")
 logger.info(f"SearXNG Key: {SEARXNG_KEY}") 
 
 
+# ... other environment variables ...
+CUSTOM_LLM = os.getenv("CUSTOM_LLM")
+
+logger.info(f"CUSTOM_LLM: {CUSTOM_LLM}")
+
+def fetch_custom_models():
+    if not CUSTOM_LLM:
+        return []
+    try:
+        response = requests.get(f"{CUSTOM_LLM}/v1/models")
+        response.raise_for_status()
+        models = response.json().get("data", [])
+        return [model["id"] for model in models]
+    except Exception as e:
+        logger.error(f"Error fetching custom models: {e}")
+        return []
+
 # Use the environment variable
 HF_TOKEN = os.getenv("HF_TOKEN")
 client = InferenceClient(
@@ -78,6 +95,8 @@ mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 
 # Initialize the similarity model
 similarity_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+
 
 # Step 1: Create a base class for AI models
 class AIModel(ABC):
@@ -125,15 +144,38 @@ class MistralModel(AIModel):
         return response.choices[0].message.content.strip()
 
 # Step 3: Use a factory pattern to create model instances
+class CustomModel(AIModel):
+    def __init__(self, model_name):
+        self.model_name = model_name
+
+    def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
+        try:
+            response = requests.post(
+                f"{CUSTOM_LLM}/v1/chat/completions",
+                json={
+                    "model": self.model_name,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                }
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error(f"Error generating response from custom model: {e}")
+            return "Error: Unable to generate response from custom model."
+
 class AIModelFactory:
     @staticmethod
-    def create_model(model_name: str, client: Any) -> AIModel:
+    def create_model(model_name: str, client: Any = None) -> AIModel:
         if model_name == "huggingface":
             return HuggingFaceModel(client)
         elif model_name == "groq":
             return GroqModel(client)
         elif model_name == "mistral":
             return MistralModel(client)
+        elif CUSTOM_LLM and model_name in fetch_custom_models():
+            return CustomModel(model_name)
         else:
             raise ValueError(f"Unsupported model: {model_name}")
 
@@ -911,6 +953,8 @@ def get_client_for_model(model: str) -> Any:
         return Groq(api_key=GROQ_API_KEY)
     elif model == "mistral":
         return Mistral(api_key=MISTRAL_API_KEY)
+    elif CUSTOM_LLM and model in fetch_custom_models():
+        return None  # CustomModel doesn't need a client
     else:
         raise ValueError(f"Unsupported model: {model}")
 
@@ -947,13 +991,16 @@ def chat_function(message: str, history: List[Tuple[str, str]], num_results: int
     yield response
 
 
+custom_models = fetch_custom_models()
+all_models = ["huggingface", "groq", "mistral"] + custom_models
+
 iface = gr.ChatInterface(
     chat_function,
     title="Web Scraper for News with Sentinel AI",
     description="Ask Sentinel any question. It will search the web for recent information or use its knowledge base as appropriate.",
     theme=gr.Theme.from_hub("allenai/gradio-theme"),
     additional_inputs=[
-        gr.Slider(5, 20, value=3, step=1, label="Number of initial results"),  # Changed default to 3
+        gr.Slider(5, 20, value=3, step=1, label="Number of initial results"),
         gr.Slider(500, 10000, value=1500, step=100, label="Max characters to retrieve"),
         gr.Dropdown(["", "day", "week", "month", "year"], value="week", label="Time Range"),
         gr.Dropdown(["", "all", "en", "fr", "de", "es", "it", "nl", "pt", "pl", "ru", "zh"], value="en", label="Language"),
@@ -965,10 +1012,10 @@ iface = gr.ChatInterface(
             label="Engines"
         ),
         gr.Slider(0, 2, value=2, step=1, label="Safe Search Level"),
-        gr.Radio(["GET", "POST"], value="GET", label="HTTP Method"),  # Changed default to GET
+        gr.Radio(["GET", "POST"], value="GET", label="HTTP Method"),
         gr.Slider(0, 1, value=0.2, step=0.1, label="LLM Temperature"),
-        gr.Dropdown(["huggingface", "groq", "mistral"], value="groq", label="LLM Model"),  # Changed default to "groq"
-        gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=True),  # Changed default to True
+        gr.Dropdown(all_models, value="groq", label="LLM Model"),
+        gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=True),
     ],
     additional_inputs_accordion=gr.Accordion("⚙️ Advanced Parameters", open=True),
     retry_btn="Retry",
@@ -985,6 +1032,10 @@ iface = gr.ChatInterface(
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
+
+
 
 
 
