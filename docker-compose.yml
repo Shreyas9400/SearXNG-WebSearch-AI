@@ -8,5 +8,4 @@ services:
     env_file:
       - .env
     environment:
-      - FLASK_ENV=${FLASK_ENV:-development}
       - SEARXNG_KEY=${SEARXNG_KEY:-http://localhost:8080}
