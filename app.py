@@ -61,9 +61,12 @@ logger.info(f"SearXNG Key: {SEARXNG_KEY}")
 
 # ... other environment variables ...
 CUSTOM_LLM = os.getenv("CUSTOM_LLM")
+CUSTOM_LLM_DEFAULT_MODEL = os.getenv("CUSTOM_LLM_DEFAULT_MODEL")
 
 logger.info(f"CUSTOM_LLM: {CUSTOM_LLM}")
+logger.info(f"CUSTOM_LLM_DEFAULT_MODEL: {CUSTOM_LLM_DEFAULT_MODEL}")
 
+# Define the fetch_custom_models function here
 def fetch_custom_models():
     if not CUSTOM_LLM:
         return []
@@ -75,6 +78,15 @@ def fetch_custom_models():
     except Exception as e:
         logger.error(f"Error fetching custom models: {e}")
         return []
+
+# Fetch custom models and determine the default model
+custom_models = fetch_custom_models()
+all_models = ["huggingface", "groq", "mistral"] + custom_models
+
+# Determine the default model
+default_model = CUSTOM_LLM_DEFAULT_MODEL if CUSTOM_LLM_DEFAULT_MODEL in all_models else "groq"
+
+logger.info(f"Default model selected: {default_model}")
 
 # Use the environment variable
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -953,18 +965,21 @@ def get_client_for_model(model: str) -> Any:
         return Groq(api_key=GROQ_API_KEY)
     elif model == "mistral":
         return Mistral(api_key=MISTRAL_API_KEY)
-    elif CUSTOM_LLM and model in fetch_custom_models():
+    elif CUSTOM_LLM and (model in fetch_custom_models() or model == CUSTOM_LLM_DEFAULT_MODEL):
         return None  # CustomModel doesn't need a client
     else:
         raise ValueError(f"Unsupported model: {model}")
 
-def chat_function(message: str, history: List[Tuple[str, str]], num_results: int, max_chars: int, time_range: str, language: str, category: str, engines: List[str], safesearch: int, method: str, llm_temperature: float, model: str, use_pydf2: bool):
+def chat_function(message: str, history: List[Tuple[str, str]], only_web_search: bool, num_results: int, max_chars: int, time_range: str, language: str, category: str, engines: List[str], safesearch: int, method: str, llm_temperature: float, model: str, use_pydf2: bool):
     chat_history = "\n".join([f"{role}: {msg}" for role, msg in history])
     
     # Create the appropriate AI model
     ai_model = AIModelFactory.create_model(model, get_client_for_model(model))
     
-    query_type = determine_query_type(message, chat_history, ai_model)
+    if only_web_search:
+        query_type = "web_search"
+    else:
+        query_type = determine_query_type(message, chat_history, ai_model)
     
     if query_type == "knowledge_base":
         response = generate_ai_response(message, chat_history, ai_model, llm_temperature)
@@ -991,15 +1006,13 @@ def chat_function(message: str, history: List[Tuple[str, str]], num_results: int
     yield response
 
 
-custom_models = fetch_custom_models()
-all_models = ["huggingface", "groq", "mistral"] + custom_models
-
 iface = gr.ChatInterface(
     chat_function,
     title="Web Scraper for News with Sentinel AI",
     description="Ask Sentinel any question. It will search the web for recent information or use its knowledge base as appropriate.",
     theme=gr.Theme.from_hub("allenai/gradio-theme"),
     additional_inputs=[
+        gr.Checkbox(label="Only do web search", value=True),  # Add this line
         gr.Slider(5, 20, value=3, step=1, label="Number of initial results"),
         gr.Slider(500, 10000, value=1500, step=100, label="Max characters to retrieve"),
         gr.Dropdown(["", "day", "week", "month", "year"], value="week", label="Time Range"),
@@ -1014,7 +1027,7 @@ iface = gr.ChatInterface(
         gr.Slider(0, 2, value=2, step=1, label="Safe Search Level"),
         gr.Radio(["GET", "POST"], value="GET", label="HTTP Method"),
         gr.Slider(0, 1, value=0.2, step=0.1, label="LLM Temperature"),
-        gr.Dropdown(all_models, value="groq", label="LLM Model"),
+        gr.Dropdown(all_models, value=default_model, label="LLM Model"),
         gr.Checkbox(label="Use PyPDF2 for PDF scraping", value=True),
     ],
     additional_inputs_accordion=gr.Accordion("⚙️ Advanced Parameters", open=True),
@@ -1032,6 +1045,16 @@ iface = gr.ChatInterface(
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
+
+
+
+
+
+
+
+
 
 
 
