@@ -970,13 +970,16 @@ def get_client_for_model(model: str) -> Any:
     else:
         raise ValueError(f"Unsupported model: {model}")
 
-def chat_function(message: str, history: List[Tuple[str, str]], num_results: int, max_chars: int, time_range: str, language: str, category: str, engines: List[str], safesearch: int, method: str, llm_temperature: float, model: str, use_pydf2: bool):
+def chat_function(message: str, history: List[Tuple[str, str]], only_web_search: bool, num_results: int, max_chars: int, time_range: str, language: str, category: str, engines: List[str], safesearch: int, method: str, llm_temperature: float, model: str, use_pydf2: bool):
     chat_history = "\n".join([f"{role}: {msg}" for role, msg in history])
     
     # Create the appropriate AI model
     ai_model = AIModelFactory.create_model(model, get_client_for_model(model))
     
-    query_type = determine_query_type(message, chat_history, ai_model)
+    if only_web_search:
+        query_type = "web_search"
+    else:
+        query_type = determine_query_type(message, chat_history, ai_model)
     
     if query_type == "knowledge_base":
         response = generate_ai_response(message, chat_history, ai_model, llm_temperature)
@@ -1009,6 +1012,7 @@ iface = gr.ChatInterface(
     description="Ask Sentinel any question. It will search the web for recent information or use its knowledge base as appropriate.",
     theme=gr.Theme.from_hub("allenai/gradio-theme"),
     additional_inputs=[
+        gr.Checkbox(label="Only do web search", value=True),  # Add this line
         gr.Slider(5, 20, value=3, step=1, label="Number of initial results"),
         gr.Slider(500, 10000, value=1500, step=100, label="Max characters to retrieve"),
         gr.Dropdown(["", "day", "week", "month", "year"], value="week", label="Time Range"),
@@ -1041,6 +1045,8 @@ iface = gr.ChatInterface(
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
 
 
 
