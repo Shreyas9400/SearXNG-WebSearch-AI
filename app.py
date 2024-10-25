@@ -71,12 +71,12 @@ def fetch_custom_models():
     if not CUSTOM_LLM:
         return []
     try:
-        response = requests.get(f"{CUSTOM_LLM}/v1/models")
+        response = requests.get(f"{CUSTOM_LLM}/api/tags")  # Ollama endpoint for listing models
         response.raise_for_status()
-        models = response.json().get("data", [])
-        return [model["id"] for model in models]
+        models = response.json().get("models", [])
+        return [model["name"] for model in models]  # Ollama returns model names directly
     except Exception as e:
-        logger.error(f"Error fetching custom models: {e}")
+        logger.error(f"Error fetching Ollama models: {e}")
         return []
 
 # Fetch custom models and determine the default model
@@ -107,8 +107,6 @@ mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 
 # Initialize the similarity model
 similarity_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-
 
 # Step 1: Create a base class for AI models
 class AIModel(ABC):
@@ -159,23 +157,44 @@ class MistralModel(AIModel):
 class CustomModel(AIModel):
     def __init__(self, model_name):
         self.model_name = model_name
+        self.base_url = os.getenv("CUSTOM_LLM", "http://localhost:11434")
 
     def generate_response(self, messages: List[Dict[str, str]], max_tokens: int, temperature: float) -> str:
         try:
+            # Convert messages to Ollama format
+            prompt = "\n".join([
+                f"{msg['role'].capitalize()}: {msg['content']}"
+                for msg in messages
+            ])
+
             response = requests.post(
-                f"{CUSTOM_LLM}/v1/chat/completions",
+                f"{self.base_url}/api/generate",  # Ollama endpoint
                 json={
                     "model": self.model_name,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature
+                    "prompt": prompt,
+                    "options": {
+                        "num_predict": max_tokens,
+                        "temperature": temperature
+                    }
                 }
             )
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"].strip()
+            
+            # Handle Ollama's streaming response
+            full_response = ""
+            for line in response.iter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    if 'response' in chunk:
+                        full_response += chunk['response']
+                    if chunk.get('done', False):
+                        break
+                        
+            return full_response.strip()
+            
         except Exception as e:
-            logger.error(f"Error generating response from custom model: {e}")
-            return "Error: Unable to generate response from custom model."
+            logger.error(f"Error generating response from Ollama model: {e}")
+            return f"Error: Unable to generate response from Ollama model. {str(e)}"
 
 class AIModelFactory:
     @staticmethod
@@ -359,7 +378,7 @@ def scrape_with_newspaper(url):
         logger.error(f"Error scraping {url} with Newspaper3k: {e}")
         return ""
 
-def rephrase_query(chat_history, query, temperature=0.2):
+def rephrase_query(chat_history, query, model, temperature=0.2) -> str:
     system_prompt = """You are a highly intelligent and context-aware conversational assistant. Your tasks are as follows:
 
 1. Determine if the new query is a continuation of the previous conversation or an entirely new topic.
@@ -427,14 +446,49 @@ Rephrased query:"""
     ]
 
     try:
-        logger.info(f"Sending rephrasing request to LLM with temperature {temperature}")
-        response = client.chat_completion(
-            messages=messages,
-            max_tokens=150,
-            temperature=temperature
-        )
-        logger.info("Received rephrased query from LLM")
-        rephrased_question = response.choices[0].message.content.strip()
+        logger.info(f"Sending rephrasing request to {model} with temperature {temperature}")
+        
+        if model == "groq":
+            response = groq_client.chat.completions.create(
+                messages=messages,
+                model="llama-3.1-70b-versatile",
+                max_tokens=150,
+                temperature=temperature,
+                top_p=0.9,
+                presence_penalty=1.2,
+                stream=False
+            )
+            rephrased_question = response.choices[0].message.content.strip()
+            
+        elif model == "mistral":
+            response = mistral_client.chat.complete(
+                model="open-mistral-nemo",
+                messages=messages,
+                max_tokens=150,
+                temperature=temperature,
+                top_p=0.9,
+                stream=False
+            )
+            rephrased_question = response.choices[0].message.content.strip()
+            
+        elif CUSTOM_LLM and model in fetch_custom_models():
+            # Create CustomModel instance for Ollama
+            custom_model = CustomModel(model)
+            rephrased_question = custom_model.generate_response(
+                messages=messages,
+                max_tokens=150,
+                temperature=temperature
+            )
+            
+        else:  # huggingface
+            response = client.chat_completion(
+                messages=messages,
+                max_tokens=150,
+                temperature=temperature,
+                frequency_penalty=1.4,
+                top_p=0.9
+            )
+            rephrased_question = response.choices[0].message.content.strip()
 
         # Remove surrounding quotes if present
         if (rephrased_question.startswith('"') and rephrased_question.endswith('"')) or \
@@ -443,15 +497,10 @@ Rephrased query:"""
 
         logger.info(f"Rephrased Query (cleaned): {rephrased_question}")
         return rephrased_question
+        
     except Exception as e:
-        logger.error(f"Error rephrasing query with LLM: {e}")
+        logger.error(f"Error rephrasing query with {model} LLM: {e}")
         return query  # Fallback to original query if rephrasing fails
-
-def extract_entity_domain(query):
-    # Use a simple regex pattern to extract domain names from the query
-    domain_pattern = r'\b(?:https?://)?(?:www\.)?([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)\b'
-    matches = re.findall(domain_pattern, query)
-    return matches[0] if matches else None
 
 class BM25:
     def __init__(self, k1: float = 1.5, b: float = 0.75):
@@ -536,23 +585,58 @@ def prepare_documents_for_bm25(documents: List[Dict]) -> Tuple[List[str], List[D
         Tuple of (document texts, original documents)
     """
     doc_texts = []
+    valid_documents = []
+    
     for doc in documents:
-        # Combine title and content for better matching
-        doc_text = f"{doc['title']} {doc['content']}"
-        doc_texts.append(doc_text)
-    return doc_texts, documents
+        try:
+            # Get title and content with default empty strings if missing
+            title = doc.get('title', '')
+            content = doc.get('content', '')
+            
+            # Skip documents with no content and title
+            if not (title.strip() or content.strip()):
+                logger.warning(f"Skipping document with no title or content: {doc}")
+                continue
+                
+            # Combine title and content for better matching
+            doc_text = f"{title} {content}".strip()
+            doc_texts.append(doc_text)
+            valid_documents.append(doc)
+            
+        except Exception as e:
+            logger.warning(f"Error processing document {doc}: {e}")
+            continue
+            
+    if not valid_documents:
+        raise ValueError("No valid documents found with required fields")
+        
+    return doc_texts, valid_documents
 
-# Now modify the rerank_documents_with_priority function to include BM25 ranking
-def rerank_documents_with_priority(query: str, documents: List[Dict], entity_domain: str, 
-                                 similarity_threshold: float = 0.95, max_results: int = 5) -> List[Dict]:
+def rerank_documents(query: str, documents: List[Dict], 
+                    similarity_threshold: float = 0.95, max_results: int = 5) -> List[Dict]:
     try:
         if not documents:
             logger.warning("No documents to rerank.")
             return documents
             
+        # Validate input documents
+        if not all(isinstance(doc, dict) for doc in documents):
+            raise ValueError("All documents must be dictionaries")
+            
         # Step 1: Prepare documents for BM25
-        doc_texts, original_docs = prepare_documents_for_bm25(documents)
+        doc_texts, valid_docs = prepare_documents_for_bm25(documents)
         
+        if not valid_docs:
+            logger.warning("No valid documents after preparation.")
+            return documents[:max_results]
+            
+        # Verify all documents have summaries for semantic scoring
+        valid_docs = [doc for doc in valid_docs if 'summary' in doc and doc['summary'].strip()]
+        
+        if not valid_docs:
+            logger.warning("No documents with valid summaries found.")
+            return documents[:max_results]
+            
         # Step 2: Initialize and fit BM25
         bm25 = BM25()
         bm25.fit(doc_texts)
@@ -562,22 +646,29 @@ def rerank_documents_with_priority(query: str, documents: List[Dict], entity_dom
         
         # Step 4: Get semantic similarity scores
         query_embedding = similarity_model.encode(query, convert_to_tensor=True)
-        doc_summaries = [doc['summary'] for doc in documents]
+        doc_summaries = [doc['summary'] for doc in valid_docs]
         doc_embeddings = similarity_model.encode(doc_summaries, convert_to_tensor=True)
         semantic_scores = util.cos_sim(query_embedding, doc_embeddings)[0]
         
         # Step 5: Combine scores (normalize first)
-        bm25_scores_norm = (bm25_scores - np.min(bm25_scores)) / (np.max(bm25_scores) - np.min(bm25_scores))
-        semantic_scores_norm = (semantic_scores - torch.min(semantic_scores)) / (torch.max(semantic_scores) - torch.min(semantic_scores))
+        if len(bm25_scores) > 1:
+            bm25_scores_norm = (bm25_scores - np.min(bm25_scores)) / (np.max(bm25_scores) - np.min(bm25_scores))
+        else:
+            bm25_scores_norm = bm25_scores
+            
+        if len(semantic_scores) > 1:
+            semantic_scores_norm = (semantic_scores - torch.min(semantic_scores)) / (torch.max(semantic_scores) - torch.min(semantic_scores))
+        else:
+            semantic_scores_norm = semantic_scores
         
         # Combine scores with weights (0.4 for BM25, 0.6 for semantic similarity)
         combined_scores = 0.4 * bm25_scores_norm + 0.6 * semantic_scores_norm.numpy()
         
         # Create scored documents with combined scores
-        scored_documents = list(zip(documents, combined_scores))
+        scored_documents = list(zip(valid_docs, combined_scores))
         
-        # Sort by domain priority and combined score
-        scored_documents.sort(key=lambda x: (not x[0]['is_entity_domain'], -x[1]), reverse=False)
+        # Sort by combined score (descending)
+        scored_documents.sort(key=lambda x: x[1], reverse=True)
         
         # Filter similar documents
         filtered_docs = []
@@ -629,8 +720,8 @@ def is_content_unique(new_content, existing_contents, similarity_threshold=0.8):
             return False
     return True
 
-def assess_relevance_and_summarize(llm_client, query, document, temperature=0.2):
-    system_prompt = """You are a world-class AI assistant specializing in news analysis. Your task is to assess the relevance of a given document to a user's query and provide a detailed summary if it's relevant."""
+def assess_relevance_and_summarize(llm_client, query, document, model, temperature=0.2) -> str:
+    system_prompt = """You are a world-class AI assistant specializing in news analysis and document summarization. Your task is to provide a comprehensive and detailed summary of the given document that captures its key points and relevance to the user's query."""
 
     user_prompt = f"""
 Query: {query}
@@ -640,20 +731,24 @@ Document Content:
 {document['content'][:1000]}  # Limit to first 1000 characters for efficiency
 
 Instructions:
-1. Assess if the document is relevant to the QUERY made by the user.
-2. If relevant, provide a detailed summary that captures the unique aspects of this particular news item. Include:
+1. Provide a detailed summary that captures the unique aspects of this document. Include:
    - Key facts and figures
    - Dates of events or announcements
    - Names of important entities mentioned
    - Any metrics or changes reported
-   - The potential impact or significance of the news
-3. If not relevant, simply state "Not relevant".
+   - The potential impact or significance of the content
+2. Focus on aspects that are most relevant to the user's query
+3. Ensure the summary is distinctive and highlights what makes this particular document unique
+4. Include any specific context that helps understand the document's significance
 
 Your response should be in the following format:
-Relevant: [Yes/No]
-Summary: [Your detailed summary if relevant, or "Not relevant" if not]
+Summary: [Your detailed summary]
 
-Remember to focus on key aspects and implications in your assessment and summary. Aim to make the summary distinctive, highlighting what makes this particular news item unique compared to similar news.
+Remember to:
+- Highlight the most important information first
+- Include specific numbers, dates, and facts when available
+- Connect the information to the user's query where relevant
+- Focus on what makes this document unique or noteworthy
 """
 
     messages = [
@@ -662,17 +757,58 @@ Remember to focus on key aspects and implications in your assessment and summary
     ]
 
     try:
-        response = llm_client.chat_completion(
-            messages=messages,
-            max_tokens=300,  # Increased to allow for more detailed summaries
-            temperature=temperature,
-            top_p=0.9,
-            frequency_penalty=1.4
-        )
-        return response.choices[0].message.content.strip()
+        if model == "groq":
+            response = groq_client.chat.completions.create(
+                messages=messages,
+                model="llama-3.1-70b-versatile",
+                max_tokens=500,
+                temperature=temperature,
+                top_p=0.9,
+                presence_penalty=1.2,
+                stream=False
+            )
+            summary = response.choices[0].message.content.strip()
+            
+        elif model == "mistral":
+            response = mistral_client.chat.complete(
+                model="open-mistral-nemo",
+                messages=messages,
+                max_tokens=500,
+                temperature=temperature,
+                top_p=0.9,
+                stream=False
+            )
+            summary = response.choices[0].message.content.strip()
+            
+        elif CUSTOM_LLM and model in fetch_custom_models():
+            # Create CustomModel instance for Ollama
+            custom_model = CustomModel(model)
+            summary = custom_model.generate_response(
+                messages=messages,
+                max_tokens=500,
+                temperature=temperature
+            )
+            
+        else:  # huggingface
+            response = client.chat_completion(
+                messages=messages,
+                max_tokens=500,
+                temperature=temperature,
+                frequency_penalty=1.4,
+                top_p=0.9
+            )
+            summary = response.choices[0].message.content.strip()
+        
+        # Clean up the summary if needed
+        if summary.startswith("Summary: "):
+            summary = summary[9:].strip()
+            
+        return f"Relevant: Yes\nSummary: {summary}"
+        
     except Exception as e:
-        logger.error(f"Error assessing relevance and summarizing with LLM: {e}")
-        return "Error: Unable to assess relevance and summarize"
+        error_msg = f"Error summarizing with {model} LLM: {str(e)}"
+        logger.error(error_msg)
+        return f"Relevant: Yes\nSummary: Error occurred while summarizing the document: {str(e)}"
 
 def scrape_full_content(url, max_chars=3000, timeout=5, use_pydf2=True):
     try:
@@ -744,6 +880,15 @@ Instructions:
                 stream=False
             )
             return response.choices[0].message.content.strip()
+        elif CUSTOM_LLM and model in fetch_custom_models():
+            # Create CustomModel instance for Ollama
+            custom_model = CustomModel(model)
+            response = custom_model.generate_response(
+                messages=messages,
+                max_tokens=1000,
+                temperature=temperature
+            )
+            return response
         else:  # huggingface
             response = client.chat_completion(
                 messages=messages,
@@ -776,18 +921,14 @@ def search_and_scrape(
 ):
     try:
         # Step 1: Rephrase the Query
-        rephrased_query = rephrase_query(chat_history, query, temperature=llm_temperature)
+        rephrased_query = rephrase_query(chat_history, query, model, temperature=llm_temperature)
         logger.info(f"Rephrased Query: {rephrased_query}")
 
         if not rephrased_query or rephrased_query.lower() == "not_needed":
             logger.info("No need to perform search based on the rephrased query.")
             return "No search needed for the provided input."
 
-        # Step 2: Extract entity domain
-        entity_domain = extract_entity_domain(rephrased_query)
-        logger.info(f"Extracted entity domain: {entity_domain}")
-
-        # Step 3: Perform search
+        # Step 2: Perform search
         # Search query parameters
         params = {
             'q': rephrased_query,
@@ -893,25 +1034,22 @@ def search_and_scrape(
 
         logger.info(f"Successfully scraped {len(scraped_content)} documents.")
 
-         # Step 4: Assess relevance, summarize, and check for uniqueness
+        # Step 4: Assess relevance, summarize, and check for uniqueness
         relevant_documents = []
         unique_summaries = []
         for doc in scraped_content:
-            assessment = assess_relevance_and_summarize(client, rephrased_query, doc, temperature=llm_temperature)
+            assessment = assess_relevance_and_summarize(client, rephrased_query, doc, model, temperature=llm_temperature)
             relevance, summary = assessment.split('\n', 1)
 
             if relevance.strip().lower() == "relevant: yes":
                 summary_text = summary.replace("Summary: ", "").strip()
                 
                 if is_content_unique(summary_text, unique_summaries):
-                    doc_domain = urlparse(doc['url']).netloc
-                    is_entity_domain = doc_domain == entity_domain
                     relevant_documents.append({
                         "title": doc['title'],
                         "url": doc['url'],
                         "summary": summary_text,
-                        "scraper": doc['scraper'],
-                        "is_entity_domain": is_entity_domain
+                        "scraper": doc['scraper']
                     })
                     unique_summaries.append(summary_text)
                 else:
@@ -921,8 +1059,8 @@ def search_and_scrape(
             logger.warning("No relevant and unique documents found.")
             return "No relevant and unique news found for the given query."
 
-        # Step 5: Rerank documents based on similarity to query and prioritize entity domain
-        reranked_docs = rerank_documents_with_priority(rephrased_query, relevant_documents, entity_domain, similarity_threshold=0.95, max_results=num_results)
+        # Step 5: Rerank documents based on similarity to query
+        reranked_docs = rerank_documents(rephrased_query, relevant_documents, similarity_threshold=0.95, max_results=num_results)
         
         if not reranked_docs:
             logger.warning("No documents remained after reranking.")
@@ -970,6 +1108,7 @@ def get_client_for_model(model: str) -> Any:
     else:
         raise ValueError(f"Unsupported model: {model}")
 
+
 def chat_function(message: str, history: List[Tuple[str, str]], only_web_search: bool, num_results: int, max_chars: int, time_range: str, language: str, category: str, engines: List[str], safesearch: int, method: str, llm_temperature: float, model: str, use_pydf2: bool):
     chat_history = "\n".join([f"{role}: {msg}" for role, msg in history])
     
@@ -1004,7 +1143,6 @@ def chat_function(message: str, history: List[Tuple[str, str]], only_web_search:
         )
     
     yield response
-
 
 iface = gr.ChatInterface(
     chat_function,
@@ -1045,29 +1183,3 @@ iface = gr.ChatInterface(
 if __name__ == "__main__":
     logger.info("Starting the SearXNG Scraper for News using ChatInterface with Advanced Parameters")
     iface.launch(server_name="0.0.0.0", server_port=7860, share=False)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
